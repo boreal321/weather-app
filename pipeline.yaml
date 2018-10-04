@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: BuildConfig
+metadata:
+  name: weather-app-aqua
+spec:
+  strategy:
+    jenkinsPipelineStrategy:
+      jenkinsfile: |-
+        pipeline {
+            agent {
+                node {
+                    label "nodejs"
+                }
+            }
+            stages {
+                stage("Create Image Builder") {
+                    when {
+                        expression {
+                            openshift.withCluster() {
+                                openshift.withProject("weather") {
+                                    return !openshift.selector("bc", "weather-app-aqua").exists()
+                                }
+                            }
+                        }
+                    }
+                    steps {
+                        script {
+                            openshift.withCluster() {
+                                openshift.withProject("weather") {
+                                    openshift.newBuild("openshift/nodejs-aqua-scan~https://github.com/boreal321/weather-app.git", "--name=weather-app-aqua")
+                                }
+                            }
+                        }
+                    }
+                }  
+                stage("Build Image") {
+                    steps {
+                        script {
+                            openshift.withCluster() {
+                                openshift.withProject("weather"){
+                                    openshift.selector("bc", "weather-app-aqua").startBuild("--wait=true")
+                                }
+                            }
+                        }
+                    }
+                }
+                stage("Create weather") {
+                    when {
+                        expression {
+                            openshift.withCluster() {
+                                openshift.withProject("weather") {
+                                    return !openshift.selector("dc", "weather-app-aqua").exists()
+                                }
+                            }
+                        }
+                    }
+                    steps {
+                        script {
+                            openshift.withCluster() {
+                                openshift.withProject("weather") {
+                                    def app = openshift.newApp("weather-app-aqua:latest", "--env AQUA_SERVER_URL=http://aqua-console.aqua-security.svc.cluster.local:8080", "--env AQUA_USERNAME=administrator", "--env AQUA_PASSWORD=password")
+                                    app.narrow("svc").expose()
+                                    def dc = openshift.selector("dc", "weather-app-aqua")
+                                    while (dc.object().spec.replicas != dc.object().status.availableReplicas) {
+                                        sleep 10
+                                    }
+                                    openshift.set("triggers", "dc/weather-app-aqua", "--manual")
+                                }
+                            }
+                        }
+                    }
+                }
+                stage("Deploy weather") {
+                    steps {
+                        script {
+                            openshift.withCluster() {
+                                openshift.withProject("weather") {
+                                    openshift.selector("dc", "weather-app-aqua").rollout().latest()
+                                }
+                            }
+                        }
+                    }
+                }
+                stage("Promote to PROD?") {
+                    steps {
+                        timeout(time:15, unit:'MINUTES') {
+                            input message: "Promote to UAT?", ok: "Promote"
+                        }
+                        script {
+                            openshift.withCluster() {
+                                openshift.tag("weather/weather-app-aqua:latest", "weather-prod/weather-app-aqua:promotePROD")
+                            }
+                        }
+                    }
+                }
+                stage("Deploy PROD") {
+                    steps {
+                        script {
+                            openshift.withCluster() {
+                                openshift.withProject("weather-prod") {
+                                    if (openshift.selector("dc", "weather-app-aqua").exists()) {
+                                        openshift.selector("dc", "weather-app-aqua").delete()
+                                        openshift.selector("svc", "weather-app-aqua").delete()
+                                        openshift.selector("route", "weather-app-aqua").delete()
+                                    }
+                                    openshift.newApp("weather-app-aqua:promotePROD")
+                                    app.narrow("svc").expose()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+      type: JenkinsPipeline
