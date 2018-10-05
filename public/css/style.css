@@ -10,10 +10,10 @@ body {
   /*
   background-image: url("https://raw.githubusercontent.com/daniyalj/arctiq-mountain/master/weatherlogoblue.jpg");
   background-size: cover;
-  */
  -moz-background-size: cover;
  -o-background-size: cover;
  -webkit-background-size: cover;
+  */
 }
 .container {
   width: 600px;
